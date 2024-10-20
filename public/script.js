@@ -68,14 +68,25 @@ async function handleFile(event) {
     const formData = new FormData();
     formData.append('excelFile', file);
 
+    // Show loader
+    const loader = document.createElement('div');
+    loader.id = 'loader';
+    loader.innerHTML = 'Uploading...';
+    document.body.appendChild(loader);
+
     try {
         await fetchWithAuth('/upload', {
             method: 'POST',
             body: formData
         });
-        await updateDataAndCharts();
+        // Reload the page after successful upload
+        window.location.reload();
     } catch (error) {
         console.error('Error uploading file:', error);
+        alert('An error occurred while uploading the file. Please try again.');
+    } finally {
+        // Remove loader
+        document.body.removeChild(loader);
     }
 }
 
