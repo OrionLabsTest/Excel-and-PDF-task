@@ -390,8 +390,8 @@ async function deleteAllData() {
             if (!response.ok) {
                 throw new Error('Failed to delete all data');
             }
-            await updateDataAndCharts();
-            alert("All data has been deleted successfully.");
+            alert("All data has been deleted successfully. The page will now reload.");
+            window.location.reload(); // This will reload the page
         } catch (error) {
             console.error('Error deleting all data:', error);
             alert("An error occurred while deleting data.");
@@ -708,3 +708,4 @@ function initApp() {
 
 // Call initApp on load
 initApp();
+
