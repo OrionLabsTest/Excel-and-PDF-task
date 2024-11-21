@@ -101,6 +101,108 @@
     flex-wrap: wrap;
     justify-content: space-around;
 }
+
+#uploadType {
+    padding: 8px;
+    margin-right: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+#loader {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.9);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    z-index: 1000;
+}
+
+#chartLoader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.loader-content {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.facility-header {
+    background-color: #4CAF50;
+    color: white;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 1.2em;
+}
+
+.date-range-container {
+    margin: 20px 0;
+    padding: 10px;
+    background: #f8f8f8;
+    border-radius: 4px;
+}
+
+.view-toggle {
+    margin: 20px 0;
+    text-align: center;
+}
+
+.view-toggle button {
+    padding: 10px 20px;
+    margin: 0 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.view-toggle button.active {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.data-view {
+    margin-top: 20px;
+}
+
+#uploadHistory {
+    margin: 20px 0;
+    padding: 15px;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.excel-table {
+    width: 100%;
+    margin-top: 20px;
+    border-collapse: collapse;
+}
+
+.excel-table th, .excel-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+.excel-table th {
+    background-color: #f5f5f5;
+}
     </style>
 </head>
 <body>
@@ -108,19 +210,57 @@
     <div id="loginForm">
         <input type="text" id="username" placeholder="Username" required>
         <input type="password" id="password" placeholder="Password" required>
+        <select id="facility" required>
+            <option value="">Select Facility</option>
+            <option value="Main Smartwash">Main Smartwash</option>
+            <option value="Second Smartwash">Second Smartwash</option>
+        </select>
         <button onclick="login()">Login</button>
     </div>
     <div id="mainContent">
+        <div id="facilityHeader" class="facility-header"></div>
+        
         <div id="controlPanel">
+            <select id="uploadType" required>
+                <option value="">Select Upload Type</option>
+                <option value="Control deduction">Control Deduction</option>
+                <option value="Sensor deduction">Sensor Deduction</option>
+            </select>
+            
+            <div class="date-range-container">
+                <label>Date Range:</label>
+                <input type="date" id="startDate">
+                <input type="date" id="endDate">
+                <button onclick="applyDateFilter()">Apply Filter</button>
+            </div>
+
             <input type="file" id="fileInput" accept=".xlsx, .xls">
             <button id="deleteAllButton">Delete All Data</button>
             <button id="logoutButton" onclick="logout()">Logout</button>
         </div>
-        <div id="fileListContainer"></div>
-        <div id="chartToggleContainer"></div>
-        <div id="chartGridContainer"></div>
-        <div id="paginationContainer"></div>
-        <div id="tableContainer"></div>
+
+        <div class="view-toggle">
+            <button id="viewRawData" class="active">Raw Data</button>
+            <button id="viewVisualizations">Visualizations</button>
+        </div>
+
+        <div id="uploadHistory" class="section">
+            <h3>Upload History</h3>
+            <div id="fileListContainer"></div>
+        </div>
+
+        <div id="rawDataView" class="data-view">
+            <div id="excelDataContainer"></div>
+        </div>
+
+        <div id="visualizationView" class="data-view" style="display: none;">
+            <div id="chartToggleContainer"></div>
+            <div id="chartGridContainer"></div>
+            <div id="paginationContainer"></div>
+        </div>
+    </div>
+    <div id="chartLoader" style="display: none;">
+        <div class="loader-content">Loading...</div>
     </div>
     <script src="script.js"></script>
 </body>

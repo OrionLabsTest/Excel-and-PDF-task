@@ -12,23 +12,32 @@ let allCharts = []; // Global variable to store all charts
 // Add these at the beginning of your script.js file
 let token = localStorage.getItem('token');
 
+// Add these variables at the top
+let currentView = 'raw';
+let currentStartDate = null;
+let currentEndDate = null;
+
 async function login() {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
+    const facility = document.getElementById('facility').value;
+    
     try {
         const response = await fetch('/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify({ username, password, facility }),
         });
         const data = await response.json();
         if (data.auth) {
             token = data.token;
             localStorage.setItem('token', token);
+            localStorage.setItem('facility', facility);
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('mainContent').style.display = 'block';
+            document.getElementById('uploadType').value = 'Control deduction';
             updateDataAndCharts();
         } else {
             alert('Login failed. Please try again.');
@@ -51,58 +60,119 @@ async function fetchWithAuth(url, options = {}) {
     if (!token) {
         throw new Error('No authentication token');
     }
-    const authOptions = {
+
+    // Don't modify headers if we're sending FormData
+    if (options.body instanceof FormData) {
+        return fetch(url, {
+            ...options,
+            headers: {
+                'Authorization': token,
+                ...options.headers
+            }
+        });
+    }
+
+    // For regular JSON requests
+    return fetch(url, {
         ...options,
         headers: {
             ...options.headers,
             'Authorization': token,
-        },
-    };
-    return fetch(url, authOptions);
+            'Content-Type': 'application/json'
+        }
+    });
 }
 
 fileInput.addEventListener('change', handleFile);
 
 async function handleFile(event) {
     const file = event.target.files[0];
+    if (!file) return;
+
+    const uploadType = document.getElementById('uploadType').value;
+    if (!uploadType) {
+        alert('Please select an upload type');
+        event.target.value = '';
+        return;
+    }
+
     const formData = new FormData();
     formData.append('excelFile', file);
 
-    // Show loader
     const loader = document.createElement('div');
     loader.id = 'loader';
     loader.innerHTML = 'Uploading...';
     document.body.appendChild(loader);
 
     try {
-        await fetchWithAuth('/upload', {
+        const response = await fetchWithAuth(`/upload/${uploadType}`, {
             method: 'POST',
-            body: formData
+            body: formData,
+            headers: {
+                'Authorization': token
+            }
         });
-        // Reload the page after successful upload
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText);
+        }
+
+        alert('File uploaded successfully');
         window.location.reload();
     } catch (error) {
         console.error('Error uploading file:', error);
-        alert('An error occurred while uploading the file. Please try again.');
+        alert(error.message || 'An error occurred while uploading the file. Please try again.');
     } finally {
-        // Remove loader
-        document.body.removeChild(loader);
+        if (document.getElementById('loader')) {
+            document.body.removeChild(loader);
+        }
+        event.target.value = '';
     }
 }
 
+// Add event listener for upload type change
+document.getElementById('uploadType').addEventListener('change', () => {
+    // Clear file input when upload type changes
+    document.getElementById('fileInput').value = '';
+});
+
 async function updateDataAndCharts() {
+    const chartLoader = document.getElementById('chartLoader');
+    chartLoader.style.display = 'flex';
+    
     try {
+        const uploadType = document.getElementById('uploadType').value;
+        if (!uploadType) {
+            console.log('No upload type selected');
+            return;
+        }
+
         const [dataResponse, filesResponse] = await Promise.all([
-            fetchWithAuth('/data'),
+            fetchWithAuth(`/data/${uploadType}`),
             fetchWithAuth('/files')
         ]);
+        
+        if (!dataResponse.ok || !filesResponse.ok) {
+            throw new Error('Failed to fetch data');
+        }
+
         const data = await dataResponse.json();
         const files = await filesResponse.json();
-        const analysis = analyzeData(data);
+        
+        // Filter data based on date range if set
+        const filteredData = filterDataByDateRange(data);
+        console.log('Filtered data:', filteredData); // Debug log
+        
+        const analysis = analyzeData(filteredData);
+        console.log('Analyzed data:', analysis); // Debug log
+        
         createCharts(analysis);
         createFileList(files);
     } catch (error) {
         console.error('Error fetching data:', error);
+    } finally {
+        chartLoader.style.display = 'none';
     }
 }
 
@@ -139,15 +209,13 @@ function createCharts(analysis) {
     
     chartToggleContainer.innerHTML = '';
     chartGridContainer.innerHTML = '';
-    tableContainer.innerHTML = '';
     
     if (Object.keys(analysis).length === 0) {
         chartGridContainer.innerHTML = '<p>No data available.</p>';
         return;
     }
-    
-    console.log('Creating charts with analysis:', analysis);
 
+    // Add chart type toggle button
     const toggleButton = document.createElement('button');
     toggleButton.textContent = `Switch to ${currentChartType === 'bar' ? 'Pie' : 'Bar'} Chart`;
     toggleButton.onclick = () => {
@@ -155,9 +223,8 @@ function createCharts(analysis) {
         createCharts(analysis);
     };
     chartToggleContainer.appendChild(toggleButton);
-    
-    createCombinedChart(analysis, chartGridContainer);
 
+    // Create charts for each line
     allCharts = Object.entries(analysis).map(([line, lineData]) => {
         const lineContainer = document.createElement('div');
         lineContainer.className = 'line-container';
@@ -166,17 +233,13 @@ function createCharts(analysis) {
         lineHeader.textContent = `Line ${line}`;
         lineContainer.appendChild(lineHeader);
 
-        // Create summary chart for this line
-        const summaryChart = createLineSummaryChart(line, lineData);
-        lineContainer.appendChild(summaryChart);
+        // Create summary charts
+        const summaryCharts = createLineSummaryCharts(line, lineData);
+        lineContainer.appendChild(summaryCharts);
 
-        // Create switchable monthly charts for this line
-        const monthlyChartsContainer = createSwitchableMonthlyCharts(line, lineData);
-        lineContainer.appendChild(monthlyChartsContainer);
-
-        // Create table for this line
-        const tableWrapper = createLineTable(line, lineData);
-        lineContainer.appendChild(tableWrapper);
+        // Create monthly charts
+        const monthlyCharts = createMonthlyCharts(line, lineData);
+        lineContainer.appendChild(monthlyCharts);
 
         return lineContainer;
     });
@@ -185,54 +248,50 @@ function createCharts(analysis) {
     createPagination(allCharts.length, chartGridContainer);
 }
 
-function createCombinedChart(analysis, container) {
-    const chartTypes = ['counts', 'timeGaps', 'downtimes'];
-    const chartTitles = {
-        counts: 'Combined Operation Counts Across All Lines',
-        timeGaps: 'Combined Time Gap Sums Across All Lines',
-        downtimes: 'Combined Downtime Sums Across All Lines'
+function createLineSummaryCharts(line, lineData) {
+    const container = document.createElement('div');
+    container.className = 'summary-charts';
+
+    // Aggregate data across all months
+    const aggregatedData = {
+        operationCounts: {},
+        timeGapSums: {},
+        downtimeSums: {}
     };
 
-    chartTypes.forEach(chartType => {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'chart-wrapper';
-        wrapper.style.width = '100%';
-        wrapper.style.height = '400px';
-
-        const canvas = document.createElement('canvas');
-        canvas.id = `combined-chart-${chartType}`;
-        wrapper.appendChild(canvas);
-        container.appendChild(wrapper);
-
-        const datasets = [];
-        const labels = new Set();
-
-        Object.entries(analysis).forEach(([line, lineData]) => {
-            Object.entries(lineData).forEach(([month, data]) => {
-                const operations = Array.from(data.uniqueOperations);
-                operations.forEach(op => labels.add(op));
-                datasets.push({
-                    label: `Line ${line} - ${month}`,
-                    data: operations.map(op => {
-                        switch(chartType) {
-                            case 'counts':
-                                return data.operationCounts[op] || 0;
-                            case 'timeGaps':
-                                return data.timeGapSums[op] || 0;
-                            case 'downtimes':
-                                return data.downtimeSums[op] || 0;
-                        }
-                    }),
-                    backgroundColor: generateColors(1)[0]
-                });
-            });
+    Object.values(lineData).forEach(monthData => {
+        Object.entries(monthData.operationCounts).forEach(([op, count]) => {
+            aggregatedData.operationCounts[op] = (aggregatedData.operationCounts[op] || 0) + count;
         });
+        Object.entries(monthData.timeGapSums).forEach(([op, sum]) => {
+            aggregatedData.timeGapSums[op] = (aggregatedData.timeGapSums[op] || 0) + sum;
+        });
+        Object.entries(monthData.downtimeSums).forEach(([op, sum]) => {
+            aggregatedData.downtimeSums[op] = (aggregatedData.downtimeSums[op] || 0) + sum;
+        });
+    });
 
+    // Create charts for each metric
+    const metrics = [
+        { title: 'Operation Counts', data: aggregatedData.operationCounts },
+        { title: 'Time Gap Sums', data: aggregatedData.timeGapSums },
+        { title: 'Downtime Sums', data: aggregatedData.downtimeSums }
+    ];
+
+    metrics.forEach(metric => {
+        const chartWrapper = document.createElement('div');
+        chartWrapper.className = 'chart-wrapper';
+        
+        const canvas = document.createElement('canvas');
         new Chart(canvas, {
             type: currentChartType,
             data: {
-                labels: Array.from(labels),
-                datasets: datasets
+                labels: Object.keys(metric.data),
+                datasets: [{
+                    label: metric.title,
+                    data: Object.values(metric.data),
+                    backgroundColor: generateColors(Object.keys(metric.data).length)
+                }]
             },
             options: {
                 responsive: true,
@@ -240,153 +299,79 @@ function createCombinedChart(analysis, container) {
                 plugins: {
                     title: {
                         display: true,
-                        text: chartTitles[chartType]
+                        text: `${metric.title} - Line ${line}`
                     }
-                },
-                scales: currentChartType === 'bar' ? {
-                    x: { stacked: true },
-                    y: { stacked: true, beginAtZero: true }
-                } : {}
+                }
             }
         });
+
+        chartWrapper.appendChild(canvas);
+        container.appendChild(chartWrapper);
     });
+
+    return container;
 }
 
-function createMonthlyCharts(line, month, data) {
-    console.log(`Creating monthly chart for Line ${line}, ${month}:`, data);
-    const operations = Array.from(data.uniqueOperations);
-    const counts = operations.map(op => data.operationCounts[op]);
-    const timeGaps = operations.map(op => data.timeGapSums[op]);
-    const downtimes = operations.map(op => data.downtimeSums[op]);
-    
-    return [
-        createChart(`${line}-${month}-counts`, `Operation Counts - Line ${line}, ${month}`, operations, counts),
-        createChart(`${line}-${month}-timegaps`, `Time Gap Sums - Line ${line}, ${month}`, operations, timeGaps),
-        createChart(`${line}-${month}-downtimes`, `Downtime Sums - Line ${line}, ${month}`, operations, downtimes)
-    ];
-}
+function createMonthlyCharts(line, lineData) {
+    const container = document.createElement('div');
+    container.className = 'monthly-charts';
 
-function createChart(id, title, labels, data) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'chart-wrapper';
-    
-    const canvas = document.createElement('canvas');
-    canvas.id = id;
-    wrapper.appendChild(canvas);
-    
-    const total = data.reduce((acc, val) => acc + val, 0);
-    const percentages = data.map(value => ((value / total) * 100).toFixed(2));
-    
-    new Chart(canvas, {
-        type: currentChartType,
-        data: {
-            labels: labels,
-            datasets: [{
-                label: title,
-                data: data,
-                backgroundColor: generateColors(data.length),
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: title
+    Object.entries(lineData).forEach(([month, data]) => {
+        const monthContainer = document.createElement('div');
+        monthContainer.className = 'month-container';
+        
+        const monthHeader = document.createElement('h3');
+        monthHeader.textContent = month;
+        monthContainer.appendChild(monthHeader);
+
+        const metrics = [
+            { title: 'Operation Counts', data: data.operationCounts },
+            { title: 'Time Gap Sums', data: data.timeGapSums },
+            { title: 'Downtime Sums', data: data.downtimeSums }
+        ];
+
+        metrics.forEach(metric => {
+            const chartWrapper = document.createElement('div');
+            chartWrapper.className = 'chart-wrapper';
+            
+            const canvas = document.createElement('canvas');
+            new Chart(canvas, {
+                type: currentChartType,
+                data: {
+                    labels: Object.keys(metric.data),
+                    datasets: [{
+                        label: metric.title,
+                        data: Object.values(metric.data),
+                        backgroundColor: generateColors(Object.keys(metric.data).length)
+                    }]
                 },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const label = context.label || '';
-                            const value = context.raw || 0;
-                            const percentage = percentages[context.dataIndex];
-                            return `${label}: ${value} (${percentage}%)`;
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${metric.title} - ${month}`
                         }
                     }
                 }
-            },
-            scales: currentChartType === 'bar' ? {
-                y: {
-                    beginAtZero: true
-                }
-            } : {}
-        }
+            });
+
+            chartWrapper.appendChild(canvas);
+            monthContainer.appendChild(chartWrapper);
+        });
+
+        container.appendChild(monthContainer);
     });
 
-    return wrapper;
-}
-
-function createAllMonthsChart(analysis) {
-    console.log('Creating all months chart with analysis:', analysis); // Debug log
-    if (Object.keys(analysis).length === 0) {
-        console.log('No data for all months chart'); // Debug log
-        return; // Don't create the chart if there's no data
-    }
-    
-    const allOperations = new Set();
-    Object.values(analysis).forEach(monthData => {
-        monthData.uniqueOperations.forEach(op => allOperations.add(op));
-    });
-
-    const labels = Array.from(allOperations);
-    const datasets = Object.entries(analysis).map(([month, data]) => ({
-        label: month,
-        data: labels.map(op => data.operationCounts[op] || 0),
-        backgroundColor: generateColors(1)[0]
-    }));
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'chart-wrapper';
-    wrapper.style.width = '100%'; // Make this chart full width
-    wrapper.style.height = '400px'; // Make this chart taller
-
-    const canvas = document.createElement('canvas');
-    canvas.id = 'all-months-chart';
-    wrapper.appendChild(canvas);
-    chartContainer.appendChild(wrapper);
-
-    new Chart(canvas, {
-        type: currentChartType,
-        data: {
-            labels: labels,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'All Months Operation Counts'
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const label = context.dataset.label || '';
-                            const value = context.raw || 0;
-                            return `${label}: ${value}`;
-                        }
-                    }
-                }
-            },
-            scales: currentChartType === 'bar' ? {
-                x: {
-                    stacked: true,
-                },
-                y: {
-                    stacked: true,
-                    beginAtZero: true
-                }
-            } : {}
-        }
-    });
+    return container;
 }
 
 function generateColors(count) {
     const colors = [];
     for (let i = 0; i < count; i++) {
-        colors.push(`hsl(${(i * 360) / count}, 70%, 60%)`);
+        const hue = (i * 360) / count;
+        colors.push(`hsla(${hue}, 70%, 60%, 0.8)`);
     }
     return colors;
 }
@@ -471,19 +456,49 @@ async function deleteMonth(line, month) {
 }
 
 function createFileList(files) {
-    const fileListContainer = document.getElementById('fileListContainer');
-    fileListContainer.innerHTML = '<h2>Uploaded Files</h2>';
-    const ul = document.createElement('ul');
-    files.forEach(file => {
-        const li = document.createElement('li');
-        li.textContent = file.originalname;
-        const deleteButton = document.createElement('button');
-        deleteButton.textContent = 'Delete';
-        deleteButton.onclick = () => deleteFile(file.filename);
-        li.appendChild(deleteButton);
-        ul.appendChild(li);
+    const container = document.getElementById('fileListContainer');
+    if (!files.length) {
+        container.innerHTML = '<p>No files uploaded yet</p>';
+        return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'excel-table';
+    table.innerHTML = `
+        <tr>
+            <th>File Name</th>
+            <th>Upload Date</th>
+            <th>Actions</th>
+        </tr>
+    `;
+
+    // Filter files based on date range
+    const filteredFiles = files.filter(file => {
+        if (!currentStartDate || !currentEndDate) return true;
+        
+        const fileDate = new Date(file.createdAt);
+        const startDate = new Date(currentStartDate);
+        const endDate = new Date(currentEndDate);
+        endDate.setHours(23, 59, 59, 999);
+        
+        return fileDate >= startDate && fileDate <= endDate;
     });
-    fileListContainer.appendChild(ul);
+
+    filteredFiles.forEach(file => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${file.originalname}</td>
+            <td>${new Date(file.createdAt).toLocaleString()}</td>
+            <td>
+                <button onclick="viewFileData('${file.filename}')">View Data</button>
+                <button onclick="deleteFile('${file.filename}')">Delete</button>
+            </td>
+        `;
+        table.appendChild(row);
+    });
+
+    container.innerHTML = '';
+    container.appendChild(table);
 }
 
 async function deleteFile(filename) {
@@ -707,12 +722,159 @@ function isLoggedIn() {
     return !!token;
 }
 
-// Modify your initialization code to check for login status
+// Update the header based on facility and upload type
+function updateHeader() {
+    const facility = localStorage.getItem('facility');
+    const uploadType = document.getElementById('uploadType').value;
+    const header = document.getElementById('facilityHeader');
+    if (facility && uploadType) {
+        header.textContent = `${uploadType} - ${facility}`;
+    }
+}
+
+// Toggle between raw data and visualizations
+document.getElementById('viewRawData').addEventListener('click', function() {
+    this.classList.add('active');
+    document.getElementById('viewVisualizations').classList.remove('active');
+    document.getElementById('rawDataView').style.display = 'block';
+    document.getElementById('visualizationView').style.display = 'none';
+    currentView = 'raw';
+    updateDisplay();
+});
+
+document.getElementById('viewVisualizations').addEventListener('click', function() {
+    this.classList.add('active');
+    document.getElementById('viewRawData').classList.remove('active');
+    document.getElementById('rawDataView').style.display = 'none';
+    document.getElementById('visualizationView').style.display = 'block';
+    currentView = 'visualization';
+    updateDisplay();
+});
+
+// Handle date filter
+function applyDateFilter() {
+    const startDateInput = document.getElementById('startDate');
+    const endDateInput = document.getElementById('endDate');
+    
+    if (!startDateInput.value || !endDateInput.value) {
+        alert('Please select both start and end dates');
+        return;
+    }
+    
+    currentStartDate = startDateInput.value;
+    currentEndDate = endDateInput.value;
+    
+    // Update both views
+    updateDisplay();
+}
+
+// Update the display based on current view and filters
+async function updateDisplay() {
+    updateHeader();
+    updateDateFilterControls();
+    const uploadType = document.getElementById('uploadType').value;
+    
+    if (currentView === 'raw') {
+        await displayRawData(uploadType);
+    } else {
+        await updateDataAndCharts();
+    }
+}
+
+// Display raw Excel data
+async function displayRawData(uploadType) {
+    const container = document.getElementById('excelDataContainer');
+    container.innerHTML = '<div class="loader">Loading data...</div>';
+
+    try {
+        const response = await fetchWithAuth(`/data/${uploadType}`);
+        const data = await response.json();
+
+        // Filter data based on date range if set
+        const filteredData = filterDataByDateRange(data);
+        
+        // Create table from data
+        const table = createDataTable(filteredData);
+        container.innerHTML = '';
+        container.appendChild(table);
+    } catch (error) {
+        console.error('Error loading raw data:', error);
+        container.innerHTML = 'Error loading data';
+    }
+}
+
+// Create table from data
+function createDataTable(data) {
+    const table = document.createElement('table');
+    table.className = 'excel-table';
+
+    // Create headers
+    const headers = ['Line', 'Date', 'Description', 'Time Gap'];
+    const headerRow = document.createElement('tr');
+    headers.forEach(header => {
+        const th = document.createElement('th');
+        th.textContent = header;
+        headerRow.appendChild(th);
+    });
+    table.appendChild(headerRow);
+
+    // Add data rows
+    Object.entries(data).forEach(([line, operations]) => {
+        operations.forEach(op => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${line}</td>
+                <td>${new Date(op.tdate).toLocaleDateString()}</td>
+                <td>${op.DESCR}</td>
+                <td>${op.tgap}</td>
+            `;
+            table.appendChild(row);
+        });
+    });
+
+    return table;
+}
+
+// Filter data by date range
+function filterDataByDateRange(data) {
+    if (!currentStartDate || !currentEndDate) return data;
+
+    const startDate = new Date(currentStartDate);
+    const endDate = new Date(currentEndDate);
+    // Set endDate to end of day to include the entire last day
+    endDate.setHours(23, 59, 59, 999);
+
+    const filtered = {};
+    Object.entries(data).forEach(([line, operations]) => {
+        filtered[line] = operations.filter(op => {
+            const opDate = new Date(op.tdate);
+            return opDate >= startDate && opDate <= endDate;
+        });
+        // Only keep lines that have operations after filtering
+        if (filtered[line].length === 0) delete filtered[line];
+    });
+
+    return filtered;
+}
+
+// Update the upload type change handler
+document.getElementById('uploadType').addEventListener('change', () => {
+    document.getElementById('fileInput').value = '';
+    updateHeader();
+    updateDisplay();
+});
+
+// Initialize the app with these new features
 function initApp() {
     if (isLoggedIn()) {
         document.getElementById('loginForm').style.display = 'none';
         document.getElementById('mainContent').style.display = 'block';
-        updateDataAndCharts();
+        const uploadType = document.getElementById('uploadType');
+        if (!uploadType.value) {
+            uploadType.value = 'Control deduction';
+        }
+        updateHeader();
+        updateDisplay();
     } else {
         document.getElementById('loginForm').style.display = 'block';
         document.getElementById('mainContent').style.display = 'none';
@@ -721,3 +883,81 @@ function initApp() {
 
 // Call initApp on load
 initApp();
+
+// Add function to view file data
+async function viewFileData(filename) {
+    const chartLoader = document.getElementById('chartLoader');
+    chartLoader.style.display = 'flex';
+
+    try {
+        const response = await fetchWithAuth(`/data/file/${filename}`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch file data');
+        }
+
+        const data = await response.json();
+        
+        // Switch to visualization view
+        document.getElementById('viewVisualizations').click();
+        
+        // Update the charts with the file's data
+        const analysis = analyzeData(data);
+        createCharts(analysis);
+
+        // Update raw data view as well
+        const table = createDataTable(data);
+        document.getElementById('excelDataContainer').innerHTML = '';
+        document.getElementById('excelDataContainer').appendChild(table);
+
+    } catch (error) {
+        console.error('Error loading file data:', error);
+        alert('Error loading file data');
+    } finally {
+        chartLoader.style.display = 'none';
+    }
+}
+
+// Add clearDateFilter function
+function clearDateFilter() {
+    currentStartDate = null;
+    currentEndDate = null;
+    
+    // Clear input fields
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
+    
+    // Update all views
+    updateDisplay();
+}
+
+// Modify the date range container HTML in index.html to include the clear button
+// Add this to the existing date-range-container div:
+function updateDateFilterControls() {
+    const container = document.querySelector('.date-range-container');
+    container.innerHTML = `
+        <label>Date Range:</label>
+        <input type="date" id="startDate" ${currentStartDate ? `value="${currentStartDate}"` : ''}>
+        <input type="date" id="endDate" ${currentEndDate ? `value="${currentEndDate}"` : ''}>
+        <button onclick="applyDateFilter()">Apply Filter</button>
+        <button onclick="clearDateFilter()">Clear Filter</button>
+        ${currentStartDate && currentEndDate ? 
+            `<span class="active-filter">
+                Filtered: ${new Date(currentStartDate).toLocaleDateString()} - 
+                ${new Date(currentEndDate).toLocaleDateString()}
+            </span>` 
+            : ''}
+    `;
+}
+
+// Add some CSS for the active filter indicator
+const style = document.createElement('style');
+style.textContent = `
+    .active-filter {
+        margin-left: 10px;
+        padding: 4px 8px;
+        background-color: #e0e0e0;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+`;
+document.head.appendChild(style);
