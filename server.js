@@ -16,7 +16,13 @@ app.use(express.json());
 
 // PostgreSQL connection with Sequelize
 const sequelize = new Sequelize('postgresql://excelupload2_user:EW3XWWBq36RSzXnVcNpK0MhBBNzJBDjb@dpg-csvk9rlumphs7387c870-a.oregon-postgres.render.com/excelupload2', {
-  dialect: 'postgres'
+  dialect: 'postgres',
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false
+    }
+  }
 });
 
 // User model

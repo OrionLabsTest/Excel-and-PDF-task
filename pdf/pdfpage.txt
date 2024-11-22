@@ -1,0 +1,28 @@
+Controlled Percent 
+Greater than 99.7% of Operational Hours are Controlled GREEN
+Between 95.5 % and 99.7% of Operational Hours are Controlled YELLOW
+Less than 95.5% of Operational Hours are Controlled RED
+
+Sensor Percent
+Sensor No Flow occurs less than 1% of the time during Controlled Hours GREEN
+ Between 1% and 2% of Controlled Hours has Sensor No Flows occuring Sensor YELLOW
+  No Flows occurs greater than 2% of Controlled Time. RED
+
+
+Chlorine Calibration Conditions
+
+All lines data are within acceptable tolerance GREEN
+One or more lines data are close to the edge of acceptable tolerance YELLOW
+One or more lines data are outside higher range than acceptable tolerance. RED
+One or more lines data are within acceptable tolerance but data is older than 15 days. BLACK
+One or more lines data are within acceptable tolerance but data is 9 to 14 days old. BROWN
+One or more lines data are outside lower range than acceptable tolerance. PURPLE
+
+
+pH Calibration Conditions 
+All Lines Calibrated within Last 8 days and within Test Parameters GREEN
+One or more Lines Calibrated outside of acceptable Test Parameters YELLOW
+One or more Lines Calibrated within Warning Limit of Test Parameters RED
+One or more Lines Not Calibrated within a 15 day Time span BLACK
+Period of 8-15 Days between Calibrations                    BROWN
+One or more lines data are outside higher range than acceptable tolerance. PURPLE
