@@ -80,6 +80,12 @@ async function fetchWithAuth(url, options = {}) {
             'Authorization': token,
             'Content-Type': 'application/json'
         }
+    }).then(response => {
+        if (response.status === 401) {
+            logout();
+            window.location.href = '/login';
+        }
+        return response;
     });
 }
 
