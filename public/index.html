@@ -210,14 +210,15 @@
     <div id="loginForm">
         <input type="text" id="username" placeholder="Username" required>
         <input type="password" id="password" placeholder="Password" required>
+        <select id="facility" required>
+            <option value="">Select Facility</option>
+            <option value="Main Smartwash">Main Smartwash</option>
+            <option value="Second Smartwash">Second Smartwash</option>
+        </select>
         <button onclick="login()">Login</button>
     </div>
-    <div id="mainContent" style="display: none;">
+    <div id="mainContent">
         <div id="facilityHeader" class="facility-header"></div>
-        <div id="facilityToggle">
-            <button onclick="toggleFacility('Main Smartwash')">Main Smartwash</button>
-            <button onclick="toggleFacility('Second Smartwash')">Second Smartwash</button>
-        </div>
         
         <div id="controlPanel">
             <select id="uploadType" required title="Select the type of upload you are performing">

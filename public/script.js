@@ -20,6 +20,7 @@ let currentEndDate = null;
 async function login() {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
+    const facility = document.getElementById('facility').value;
     
     try {
         const response = await fetch('/login', {
@@ -27,16 +28,16 @@ async function login() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify({ username, password, facility }),
         });
         const data = await response.json();
         if (data.auth) {
             token = data.token;
             localStorage.setItem('token', token);
-            localStorage.setItem('facility', data.facility);
+            localStorage.setItem('facility', facility);
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('mainContent').style.display = 'block';
-            updateHeader();
+            document.getElementById('uploadType').value = 'Control deduction';
             updateDataAndCharts();
         } else {
             alert('Login failed. Please try again.');
@@ -966,8 +967,3 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
-
-function toggleFacility(facility) {
-    localStorage.setItem('facility', facility);
-    updateHeader();
-}
