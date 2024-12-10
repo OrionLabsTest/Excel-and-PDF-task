@@ -296,7 +296,43 @@ app.get('/data/:uploadType', verifyToken, async (req, res) => {
 // Endpoint to get list of uploaded files
 app.get('/files', verifyToken, async (req, res) => {
     try {
-        const files = await UploadedFile.findAll({ where: { UserId: req.userId } });
+        const uploadType = req.query.uploadType;
+        let files;
+
+        // Get all files first
+        const allFiles = await UploadedFile.findAll({ 
+            where: { UserId: req.userId },
+            order: [['createdAt', 'DESC']]
+        });
+
+        if (uploadType) {
+            // For each file, check if it has operations of the specified type
+            const filesWithOperations = await Promise.all(
+                allFiles.map(async (file) => {
+                    const timeWindow = 5; // 5 seconds window
+                    const uploadTime = new Date(file.createdAt);
+                    const windowStart = new Date(uploadTime.getTime() - (timeWindow * 1000));
+                    const windowEnd = new Date(uploadTime.getTime() + (timeWindow * 1000));
+
+                    const hasOperations = await Operation.findOne({
+                        where: {
+                            UserId: req.userId,
+                            uploadType: uploadType,
+                            createdAt: {
+                                [Sequelize.Op.between]: [windowStart, windowEnd]
+                            }
+                        }
+                    });
+
+                    return hasOperations ? file : null;
+                })
+            );
+
+            files = filesWithOperations.filter(file => file !== null);
+        } else {
+            files = allFiles;
+        }
+        
         res.json(files);
     } catch (error) {
         console.error('Error fetching files:', error);
@@ -304,11 +340,23 @@ app.get('/files', verifyToken, async (req, res) => {
     }
 });
 
-// Endpoint to delete all data
+// Update the delete all data endpoint
 app.delete('/data/all', verifyToken, async (req, res) => {
+    const uploadType = req.query.uploadType; // Get uploadType from query params
+    if (!uploadType) {
+        return res.status(400).json({ error: 'Upload type is required' });
+    }
+
     try {
-        // Get all files for the user
-        const files = await UploadedFile.findAll({ where: { UserId: req.userId } });
+        // Get all files for the user with the specified upload type
+        const files = await UploadedFile.findAll({
+            include: [{
+                model: Operation,
+                where: { uploadType: uploadType },
+                required: true
+            }],
+            where: { UserId: req.userId }
+        });
 
         // Delete all physical files
         for (const file of files) {
@@ -320,11 +368,22 @@ app.delete('/data/all', verifyToken, async (req, res) => {
             }
         }
 
-        // Delete all operations and file records
-        await Operation.destroy({ where: { UserId: req.userId } });
-        await UploadedFile.destroy({ where: { UserId: req.userId } });
+        // Delete all operations of the specified type
+        await Operation.destroy({ 
+            where: { 
+                UserId: req.userId,
+                uploadType: uploadType
+            } 
+        });
 
-        res.json({ message: "All data and files deleted successfully" });
+        // Delete the file records
+        await UploadedFile.destroy({ 
+            where: { 
+                id: files.map(f => f.id)
+            } 
+        });
+
+        res.json({ message: `All ${uploadType} data and files deleted successfully` });
     } catch (error) {
         console.error('Error deleting all data:', error);
         res.status(500).json({ error: error.message });
@@ -354,9 +413,15 @@ app.delete('/data/:line/:month', verifyToken, async (req, res) => {
     }
 });
 
-// New endpoint to delete a specific file and its data
+// Update the single file deletion endpoint
 app.delete('/file/:filename', verifyToken, async (req, res) => {
     const filename = req.params.filename;
+    const uploadType = req.query.uploadType;
+    
+    if (!uploadType) {
+        return res.status(400).json({ error: 'Upload type is required' });
+    }
+
     try {
         // Start a transaction
         await sequelize.transaction(async (t) => {
@@ -377,8 +442,20 @@ app.delete('/file/:filename', verifyToken, async (req, res) => {
             const windowStart = new Date(uploadTime.getTime() - (timeWindow * 1000));
             const windowEnd = new Date(uploadTime.getTime() + (timeWindow * 1000));
 
-            // Delete associated operations
+            // Delete associated operations of the specified type
             await Operation.destroy({
+                where: {
+                    UserId: req.userId,
+                    uploadType: uploadType,
+                    createdAt: {
+                        [Sequelize.Op.between]: [windowStart, windowEnd]
+                    }
+                },
+                transaction: t
+            });
+            
+            // Check if there are any remaining operations for this file
+            const remainingOperations = await Operation.count({
                 where: {
                     UserId: req.userId,
                     createdAt: {
@@ -387,21 +464,24 @@ app.delete('/file/:filename', verifyToken, async (req, res) => {
                 },
                 transaction: t
             });
-            
-            // Delete the physical file
-            const filePath = path.join(__dirname, 'uploads', filename);
-            try {
-                await fs.unlink(filePath);
-            } catch (unlinkError) {
-                console.error('Error deleting physical file:', unlinkError);
-                // Continue with deletion of database record even if file deletion fails
+
+            // Only delete the physical file and file record if no operations remain
+            if (remainingOperations === 0) {
+                // Delete the physical file
+                const filePath = path.join(__dirname, 'uploads', filename);
+                try {
+                    await fs.unlink(filePath);
+                } catch (unlinkError) {
+                    console.error('Error deleting physical file:', unlinkError);
+                    // Continue with deletion of database record even if file deletion fails
+                }
+                
+                // Delete the file record
+                await file.destroy({ transaction: t });
             }
-            
-            // Delete the file record
-            await file.destroy({ transaction: t });
         });
         
-        res.json({ message: `File ${filename} and its data deleted successfully` });
+        res.json({ message: `File ${filename} and its ${uploadType} data deleted successfully` });
     } catch (error) {
         console.error('Error deleting file:', error);
         res.status(500).json({ error: error.message });
@@ -411,6 +491,11 @@ app.delete('/file/:filename', verifyToken, async (req, res) => {
 // Add new endpoint to get data for a specific file
 app.get('/data/file/:filename', verifyToken, async (req, res) => {
     try {
+        const uploadType = req.query.uploadType;
+        if (!uploadType) {
+            return res.status(400).json({ error: "Upload type is required" });
+        }
+
         const file = await UploadedFile.findOne({
             where: { 
                 filename: req.params.filename,
@@ -422,7 +507,7 @@ app.get('/data/file/:filename', verifyToken, async (req, res) => {
             return res.status(404).json({ error: "File not found" });
         }
 
-        // Get operations created within the same transaction as the file upload
+        // Get operations of the specified type within the upload time window
         const timeWindow = 5; // 5 seconds window
         const uploadTime = new Date(file.createdAt);
         const windowStart = new Date(uploadTime.getTime() - (timeWindow * 1000));
@@ -431,6 +516,7 @@ app.get('/data/file/:filename', verifyToken, async (req, res) => {
         const operations = await Operation.findAll({
             where: {
                 UserId: req.userId,
+                uploadType: uploadType,
                 createdAt: {
                     [Sequelize.Op.between]: [windowStart, windowEnd]
                 }
@@ -451,6 +537,116 @@ app.get('/data/file/:filename', verifyToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// Update the dashboard endpoint
+app.get('/dashboard', verifyToken, async (req, res) => {
+    const { startDate, endDate } = req.query;
+    const uploadType = req.query.uploadType || 'Control deduction';
+    
+    try {
+        // Get user's facility
+        const user = await User.findByPk(req.userId);
+        const facilityUsers = await User.findAll({
+            where: { facility: user.facility },
+            attributes: ['id']
+        });
+        const facilityUserIds = facilityUsers.map(u => u.id);
+
+        let whereClause = {
+            UserId: facilityUserIds,
+            uploadType: uploadType
+        };
+
+        // If no dates provided, default to today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        if (startDate && endDate) {
+            whereClause.tdate = {
+                [Sequelize.Op.between]: [new Date(startDate), new Date(endDate)]
+            };
+        } else {
+            whereClause.tdate = {
+                [Sequelize.Op.between]: [today, tomorrow]
+            };
+        }
+
+        // Get all operations for the period
+        const operations = await Operation.findAll({
+            where: whereClause,
+            attributes: [
+                'line',
+                'tgap',
+                [sequelize.fn('COUNT', sequelize.col('id')), 'deductionCount'],
+                [sequelize.fn('SUM', sequelize.col('tgap')), 'totalTgap']
+            ],
+            group: ['line', 'tgap']
+        });
+
+        // Process the data
+        const lineMetrics = {};
+        const allDeductions = [];
+        let totalDeductions = 0;
+        let totalTgap = 0;
+        let deductionsGreaterThanOne = 0;
+
+        operations.forEach(op => {
+            const line = op.line;
+            const tgap = parseFloat(op.tgap);
+            const count = parseInt(op.get('deductionCount'));
+
+            if (!lineMetrics[line]) {
+                lineMetrics[line] = {
+                    deductionCount: 0,
+                    totalMinutes: 0
+                };
+            }
+
+            lineMetrics[line].deductionCount += count;
+            lineMetrics[line].totalMinutes += tgap * count;
+
+            totalDeductions += count;
+            totalTgap += tgap * count;
+            allDeductions.push(...Array(count).fill(tgap));
+
+            if (tgap > 1) {
+                deductionsGreaterThanOne += count;
+            }
+        });
+
+        // Calculate averages and medians
+        const averageDeductions = totalDeductions / Object.keys(lineMetrics).length || 0;
+        const medianDeductions = calculateMedian(allDeductions);
+
+        res.json({
+            deductionsByLine: Object.fromEntries(
+                Object.entries(lineMetrics).map(([line, data]) => [line, data.deductionCount])
+            ),
+            minutesByLine: Object.fromEntries(
+                Object.entries(lineMetrics).map(([line, data]) => [line, data.totalMinutes.toFixed(2)])
+            ),
+            averageDeductionsToday: averageDeductions.toFixed(2),
+            medianDeductions: medianDeductions.toFixed(2),
+            deductionsGreaterThanOne,
+            cumulativeValueOfDeductions: totalTgap.toFixed(2),
+            totalDeductions
+        });
+    } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        res.status(500).json({ error: 'Error fetching dashboard data' });
+    }
+});
+
+// Helper function to calculate median
+function calculateMedian(values) {
+    if (values.length === 0) return 0;
+    values.sort((a, b) => a - b);
+    const half = Math.floor(values.length / 2);
+    if (values.length % 2) return values[half];
+    return (values[half - 1] + values[half]) / 2.0;
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
