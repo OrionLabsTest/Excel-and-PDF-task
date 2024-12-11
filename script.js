@@ -179,7 +179,7 @@ function createCombinedChart(analysis, container) {
     const chartTitles = {
         counts: 'Combined Operation Counts Across All Lines',
         timeGaps: 'Combined Time Gap Sums Across All Lines',
-        downtimes: 'Combined Downtime Sums Across All Lines'
+        // downtimes: 'Combined Downtime Sums Across All Lines'
     };
 
     chartTypes.forEach(chartType => {

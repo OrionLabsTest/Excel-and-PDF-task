@@ -406,6 +406,202 @@ canvas {
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
+
+/* Add these styles to your existing CSS */
+.combined-visualization {
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.combined-visualization h2 {
+    text-align: center;
+    color: #333;
+    margin-bottom: 20px;
+}
+
+.combined-charts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.combined-charts .chart-wrapper {
+    height: 400px;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.combined-charts h3 {
+    text-align: center;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+@media (min-width: 1200px) {
+    .combined-charts {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.metrics-display {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.metric-card {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.metric-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #333;
+    margin-top: 10px;
+}
+
+.calibration-indicators {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-circle {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: #ccc;
+}
+
+.status-green {
+    background-color: #4CAF50;
+}
+
+.status-yellow {
+    background-color: #FFC107;
+}
+
+.metrics-form-container {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.form-group label {
+    font-weight: bold;
+    color: #666;
+}
+
+.form-group input {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.submit-btn {
+    background-color: var(--main-color);
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.submit-btn:hover {
+    background-color: var(--darker-shade);
+}
+
+.metric-details {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.metric-row label {
+    font-weight: bold;
+    color: #666;
+}
+
+.metric-row .metric-value {
+    font-size: 16px;
+    margin: 0;
+}
+
+.metrics-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.metrics-history-table th,
+.metrics-history-table td {
+    padding: 10px;
+    border: 1px solid #ddd;
+    text-align: left;
+}
+
+.metrics-history-table th {
+    background-color: #f5f5f5;
+    font-weight: bold;
+}
+
+.delete-btn {
+    background-color: #dc3545;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.delete-btn:hover {
+    background-color: #c82333;
+}
+
+.metrics-history {
+    margin-top: 20px;
+}
     </style>
 </head>
 <body>
@@ -521,6 +717,158 @@ canvas {
                     <div class="metric-item">
                         <label for="cumulativeValueOfDeductions">Total Cumulative Value:</label>
                         <span id="cumulativeValueOfDeductions"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="plantMetricsDashboard" class="dashboard-section">
+                <h2>Plant Metrics Dashboard</h2>
+                
+                <!-- Current Metrics Display -->
+                <div class="metrics-display">
+                    <div class="metric-card">
+                        <h3>Current Plant Ranking</h3>
+                        <div id="currentRanking" class="metric-value">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>YTD Average Ranking</h3>
+                        <div id="ytdRanking" class="metric-value">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Calibration Status</h3>
+                        <div class="calibration-indicators">
+                            <div class="indicator">
+                                <span>Control:</span>
+                                <div id="controlIndicator" class="status-circle"></div>
+                                <span id="controlCalibrationValue">-</span>
+                            </div>
+                            <div class="indicator">
+                                <span>Sensor:</span>
+                                <div id="sensorIndicator" class="status-circle"></div>
+                                <span id="sensorCalibrationValue">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Latest Metrics</h3>
+                        <div class="metric-details">
+                            <div class="metric-row">
+                                <label>Lines NR:</label>
+                                <span id="currentLinesNR" class="metric-value">-</span>
+                            </div>
+                            <div class="metric-row">
+                                <label>Days:</label>
+                                <span id="currentDays" class="metric-value">-</span>
+                            </div>
+                            <div class="metric-row">
+                                <label>Control Hours:</label>
+                                <span id="currentControlHours" class="metric-value">-</span>
+                            </div>
+                            <div class="metric-row">
+                                <label>Operation Hours:</label>
+                                <span id="currentOperationHours" class="metric-value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Current Week Metrics</h3>
+                        <div class="metric-details">
+                            <div class="metric-row">
+                                <label>Week Range:</label>
+                                <span id="currentWeekRange" class="metric-value">-</span>
+                            </div>
+                            <div class="metric-row">
+                                <label>Total Deductions:</label>
+                                <span id="weeklyDeductions" class="metric-value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Input Form -->
+                <div class="metrics-form-container">
+                    <h3>Add New Metrics</h3>
+                    <form id="plantMetricsForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="metricsDate">Date:</label>
+                                <input type="date" id="metricsDate" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="metricsTime">Time:</label>
+                                <input type="time" id="metricsTime" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="plantRanking">Plant Ranking:</label>
+                                <input type="number" id="plantRanking" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="sensorCalibration">Sensor Calibration (%):</label>
+                                <input type="number" id="sensorCalibration" step="0.0001" min="0" max="100" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="controlCalibration">Control Calibration (%):</label>
+                                <input type="number" id="controlCalibration" step="0.0001" min="0" max="100" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="controlPercentage">Control Percentage:</label>
+                                <input type="number" id="controlPercentage" step="0.0001" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="sensorPercentage">Sensor Percentage:</label>
+                                <input type="number" id="sensorPercentage" step="0.0001" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="operationHours">Operation Hours:</label>
+                                <input type="number" id="operationHours" step="0.01" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="controlHours">Control Hours:</label>
+                                <input type="number" id="controlHours" step="0.01" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="days">Days:</label>
+                                <input type="number" id="days" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="linesNR">Lines NR:</label>
+                                <input type="text" id="linesNR" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="submit-btn">Submit Metrics</button>
+                    </form>
+                </div>
+
+                <!-- Add this after the metrics-form-container div in the plantMetricsDashboard section -->
+                <div class="metrics-history collapsible-section">
+                    <div class="collapsible-header" onclick="toggleMetricsHistory()">
+                        <h3>Metrics History</h3>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div id="metricsHistoryContainer" class="collapsible-content" style="display: none;">
+                        <table class="metrics-history-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Plant Ranking</th>
+                                    <th>Control Cal.</th>
+                                    <th>Sensor Cal.</th>
+                                    <th>Lines NR</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="metricsHistoryBody"></tbody>
+                        </table>
+                        <button id="deleteAllMetrics" class="delete-btn">Delete All Metrics</button>
                     </div>
                 </div>
             </div>

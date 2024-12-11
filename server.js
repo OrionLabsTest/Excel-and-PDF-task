@@ -58,10 +58,10 @@ const Operation = sequelize.define('Operation', {
   timestamps: true
 });
 
-// Add user association to UploadedFile model
+// Modify the UploadedFile model
 const UploadedFile = sequelize.define('UploadedFile', {
-  filename: DataTypes.STRING,
-  originalname: DataTypes.STRING
+    filename: DataTypes.STRING,
+    originalname: DataTypes.STRING
 });
 
 // Set up associations
@@ -69,6 +69,90 @@ User.hasMany(Operation);
 Operation.belongsTo(User);
 User.hasMany(UploadedFile);
 UploadedFile.belongsTo(User);
+
+// Add this with other models
+const PlantMetrics = sequelize.define('PlantMetrics', {
+    facility: {
+        type: DataTypes.ENUM('Main Smartwash', 'Second Smartwash'),
+        allowNull: false
+    },
+    date: {
+        type: DataTypes.DATEONLY,
+        allowNull: false
+    },
+    time: {
+        type: DataTypes.TIME,
+        allowNull: false
+    },
+    plantRanking: {
+        type: DataTypes.INTEGER,
+        allowNull: false
+    },
+    sensorCalibration: {
+        type: DataTypes.DECIMAL(7, 4),
+        allowNull: false,
+        validate: {
+            min: 0,
+            max: 100
+        }
+    },
+    controlCalibration: {
+        type: DataTypes.DECIMAL(7, 4),
+        allowNull: false,
+        validate: {
+            min: 0,
+            max: 100
+        }
+    },
+    controlPercentage: {
+        type: DataTypes.DECIMAL(7, 4),
+        allowNull: false
+    },
+    sensorPercentage: {
+        type: DataTypes.DECIMAL(7, 4),
+        allowNull: false
+    },
+    operationHours: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false
+    },
+    controlHours: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false
+    },
+    days: {
+        type: DataTypes.INTEGER,
+        allowNull: false
+    },
+    linesNR: {
+        type: DataTypes.STRING,
+        allowNull: false
+    }
+});
+
+// Add this new model after your existing models
+const FileSerialNumber = sequelize.define('FileSerialNumber', {
+    serialNumber: {
+        type: DataTypes.INTEGER,
+        allowNull: false
+    },
+    facility: {
+        type: DataTypes.ENUM('Main Smartwash', 'Second Smartwash'),
+        allowNull: false
+    },
+    UploadedFileId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+            model: 'UploadedFiles',
+            key: 'id'
+        }
+    }
+});
+
+// Add the association
+UploadedFile.hasOne(FileSerialNumber);
+FileSerialNumber.belongsTo(UploadedFile);
 
 // Sync the models with the database
 sequelize.sync({ alter: true }).then(() => {
@@ -150,13 +234,26 @@ app.get('/me', verifyToken, async (req, res) => {
   }
 });
 
-// Endpoint to handle file upload
+// Add this function to get the next serial number
+async function getNextSerialNumber(facility) {
+    const maxSerial = await FileSerialNumber.max('serialNumber', {
+        where: { facility }
+    }) || 0;
+    return maxSerial + 1;
+}
+
+// Modify the file upload endpoint
 app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).send('No file uploaded.');
     }
 
     try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).send('User not found.');
+        }
+
         // Check for existing file with same name
         const existingFile = await UploadedFile.findOne({
             where: {
@@ -166,7 +263,6 @@ app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (
         });
 
         if (existingFile) {
-            // Delete the uploaded file since we're rejecting it
             await fs.unlink(req.file.path);
             return res.status(400).send('A file with this name has already been uploaded. Please rename the file before uploading.');
         }
@@ -186,12 +282,6 @@ app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (
         if ((uploadType === 'Control deduction' && !isControlFile) || 
             (uploadType === 'Sensor deduction' && !isSensorFile)) {
             return res.status(400).send('File type does not match the upload type.');
-        }
-
-        // Get user's facility
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(404).send('User not found.');
         }
 
         const workbook = new ExcelJS.Workbook();
@@ -230,15 +320,28 @@ app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (
         }
 
         try {
+            let uploadedFile;
+            let serialNumber;
+
             await sequelize.transaction(async (t) => {
+                // Create operations
                 for (const lineOperations of Object.values(operations)) {
                     await Operation.bulkCreate(lineOperations, { transaction: t });
                 }
 
-                await UploadedFile.create({
+                // Create file record
+                uploadedFile = await UploadedFile.create({
                     filename: req.file.filename,
                     originalname: req.file.originalname,
                     UserId: req.userId
+                }, { transaction: t });
+
+                // Get next serial number and create serial number record
+                serialNumber = await getNextSerialNumber(user.facility);
+                await FileSerialNumber.create({
+                    serialNumber: serialNumber,
+                    facility: user.facility,
+                    UploadedFileId: uploadedFile.id
                 }, { transaction: t });
             });
 
@@ -293,23 +396,28 @@ app.get('/data/:uploadType', verifyToken, async (req, res) => {
     }
 });
 
-// Endpoint to get list of uploaded files
+// Modify the get files endpoint
 app.get('/files', verifyToken, async (req, res) => {
     try {
         const uploadType = req.query.uploadType;
+        const user = await User.findByPk(req.userId);
         let files;
 
-        // Get all files first
+        // Get all files with their serial numbers
         const allFiles = await UploadedFile.findAll({ 
             where: { UserId: req.userId },
-            order: [['createdAt', 'DESC']]
+            include: [{
+                model: FileSerialNumber,
+                required: false // Use left join to get files even without serial numbers
+            }],
+            order: [[{ model: FileSerialNumber }, 'serialNumber', 'DESC']]
         });
 
         if (uploadType) {
             // For each file, check if it has operations of the specified type
             const filesWithOperations = await Promise.all(
                 allFiles.map(async (file) => {
-                    const timeWindow = 5; // 5 seconds window
+                    const timeWindow = 5;
                     const uploadTime = new Date(file.createdAt);
                     const windowStart = new Date(uploadTime.getTime() - (timeWindow * 1000));
                     const windowEnd = new Date(uploadTime.getTime() + (timeWindow * 1000));
@@ -333,7 +441,13 @@ app.get('/files', verifyToken, async (req, res) => {
             files = allFiles;
         }
         
-        res.json(files);
+        // Format the response to include serial numbers
+        const formattedFiles = files.map(file => ({
+            ...file.toJSON(),
+            serialNumber: file.FileSerialNumber ? file.FileSerialNumber.serialNumber : 'N/A'
+        }));
+        
+        res.json(formattedFiles);
     } catch (error) {
         console.error('Error fetching files:', error);
         res.status(500).json({ error: error.message });
@@ -544,7 +658,6 @@ app.get('/dashboard', verifyToken, async (req, res) => {
     const uploadType = req.query.uploadType || 'Control deduction';
     
     try {
-        // Get user's facility
         const user = await User.findByPk(req.userId);
         const facilityUsers = await User.findAll({
             where: { facility: user.facility },
@@ -552,26 +665,51 @@ app.get('/dashboard', verifyToken, async (req, res) => {
         });
         const facilityUserIds = facilityUsers.map(u => u.id);
 
+        // Get first available date for this upload type
+        const firstRecord = await Operation.findOne({
+            where: { 
+                UserId: facilityUserIds,
+                uploadType: uploadType
+            },
+            order: [['tdate', 'ASC']]
+        });
+
         let whereClause = {
             UserId: facilityUserIds,
             uploadType: uploadType
         };
 
-        // If no dates provided, default to today
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
         if (startDate && endDate) {
             whereClause.tdate = {
                 [Sequelize.Op.between]: [new Date(startDate), new Date(endDate)]
             };
-        } else {
+        } else if (firstRecord) {
+            // Default date range: from first record to current date
             whereClause.tdate = {
-                [Sequelize.Op.between]: [today, tomorrow]
+                [Sequelize.Op.between]: [firstRecord.tdate, new Date()]
             };
         }
+
+        // Get current week's start and end dates
+        const today = new Date();
+        const currentWeekStart = new Date(today);
+        currentWeekStart.setDate(today.getDate() - today.getDay()); // Start of week (Sunday)
+        currentWeekStart.setHours(0, 0, 0, 0);
+        
+        const currentWeekEnd = new Date(currentWeekStart);
+        currentWeekEnd.setDate(currentWeekStart.getDate() + 6); // End of week (Saturday)
+        currentWeekEnd.setHours(23, 59, 59, 999);
+
+        // Get weekly deductions count
+        const weeklyDeductions = await Operation.count({
+            where: {
+                UserId: facilityUserIds,
+                uploadType: uploadType,
+                tdate: {
+                    [Sequelize.Op.between]: [currentWeekStart, currentWeekEnd]
+                }
+            }
+        });
 
         // Get all operations for the period
         const operations = await Operation.findAll({
@@ -631,7 +769,12 @@ app.get('/dashboard', verifyToken, async (req, res) => {
             medianDeductions: medianDeductions.toFixed(2),
             deductionsGreaterThanOne,
             cumulativeValueOfDeductions: totalTgap.toFixed(2),
-            totalDeductions
+            totalDeductions,
+            weeklyDeductions,
+            weekRange: {
+                start: currentWeekStart,
+                end: currentWeekEnd
+            }
         });
     } catch (error) {
         console.error('Error fetching dashboard data:', error);
@@ -647,6 +790,107 @@ function calculateMedian(values) {
     if (values.length % 2) return values[half];
     return (values[half - 1] + values[half]) / 2.0;
 }
+
+// Add plant metrics
+app.post('/plant-metrics', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        const metrics = await PlantMetrics.create({
+            ...req.body,
+            facility: user.facility
+        });
+        res.json(metrics);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get plant metrics
+app.get('/plant-metrics', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        
+        // Get most recent metrics
+        const mostRecent = await PlantMetrics.findOne({
+            where: { facility: user.facility },
+            order: [['date', 'DESC'], ['time', 'DESC']]
+        });
+
+        // Calculate year-to-date average
+        const currentYear = new Date().getFullYear();
+        const yearStart = new Date(currentYear, 0, 1);
+        
+        const yearMetrics = await PlantMetrics.findAll({
+            where: {
+                facility: user.facility,
+                date: {
+                    [Sequelize.Op.gte]: yearStart
+                }
+            },
+            attributes: [
+                [sequelize.fn('AVG', sequelize.col('plantRanking')), 'avgRanking']
+            ]
+        });
+
+        const ytdAverage = yearMetrics[0].dataValues.avgRanking || 0;
+
+        res.json({
+            mostRecent,
+            ytdAverage: parseFloat(ytdAverage).toFixed(2)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get metrics history
+app.get('/plant-metrics/history', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        const metrics = await PlantMetrics.findAll({
+            where: { facility: user.facility },
+            order: [['date', 'DESC'], ['time', 'DESC']]
+        });
+        res.json(metrics);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete specific metric
+app.delete('/plant-metrics/:id', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        const metric = await PlantMetrics.findOne({
+            where: { 
+                id: req.params.id,
+                facility: user.facility
+            }
+        });
+
+        if (!metric) {
+            return res.status(404).json({ error: 'Metric not found' });
+        }
+
+        await metric.destroy();
+        res.json({ message: 'Metric deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete all metrics for a facility
+app.delete('/plant-metrics', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        await PlantMetrics.destroy({
+            where: { facility: user.facility }
+        });
+        res.json({ message: 'All metrics deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

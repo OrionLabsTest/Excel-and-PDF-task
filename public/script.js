@@ -144,7 +144,34 @@ async function handleFile(event) {
         }
 
         alert('File uploaded successfully');
-        window.location.reload();
+        
+        // Update both raw data and file list
+        await Promise.all([
+            // Update raw data display
+            displayRawData(uploadType),
+            
+            // Update file list
+            (async () => {
+                const filesResponse = await fetchWithAuth(`/files?uploadType=${uploadType}`);
+                if (filesResponse.ok) {
+                    const files = await filesResponse.json();
+                    await createFileList(files);
+                }
+            })()
+        ]);
+
+        // Update charts if in visualization view
+        if (document.getElementById('visualizationView').style.display !== 'none') {
+            await updateDataAndCharts();
+        }
+
+        // Make sure the upload history is visible after update
+        const fileListContainer = document.getElementById('fileListContainer');
+        if (fileListContainer.style.display === 'none') {
+            fileListContainer.style.display = 'block';
+            document.querySelector('.toggle-icon').classList.add('open');
+        }
+
     } catch (error) {
         console.error('Error uploading file:', error);
         alert(error.message || 'An error occurred while uploading the file. Please try again.');
@@ -156,8 +183,8 @@ async function handleFile(event) {
     }
 }
 
-// Add event listener for upload type change
-document.getElementById('uploadType').addEventListener('change', (event) => {
+// Update the upload type change handler
+document.getElementById('uploadType').addEventListener('change', async (event) => {
     const uploadType = event.target.value;
     localStorage.setItem(STORAGE_KEYS.UPLOAD_TYPE, uploadType);
     document.getElementById('fileInput').value = '';
@@ -167,17 +194,28 @@ document.getElementById('uploadType').addEventListener('change', (event) => {
     // Add visual feedback animation
     const mainContent = document.getElementById('mainContent');
     mainContent.style.opacity = '0.5';
-    setTimeout(() => {
-        mainContent.style.opacity = '1';
-        // Update views
-        if (currentView === 'visualization') {
-            updateDataAndCharts();
-        } else if (currentView === 'dashboard') {
-            updateDashboardMetrics();
-        } else {
-            updateDisplay();
+    
+    try {
+        // Fetch new files for the selected upload type
+        const filesResponse = await fetchWithAuth(`/files?uploadType=${uploadType}`);
+        if (filesResponse.ok) {
+            const files = await filesResponse.json();
+            await createFileList(files);
         }
-    }, 300);
+
+        // Update other views based on current view
+        if (currentView === 'visualization') {
+            await updateDataAndCharts();
+        } else if (currentView === 'dashboard') {
+            await updateDashboardMetrics();
+        } else {
+            await updateDisplay();
+        }
+    } catch (error) {
+        console.error('Error updating data:', error);
+    } finally {
+        mainContent.style.opacity = '1';
+    }
 });
 
 // Add new function to update color scheme
@@ -348,16 +386,21 @@ function createCharts(analysis) {
 
     lineSelect.addEventListener('change', (e) => {
         const selectedLine = e.target.value;
-        displaySelectedLine(selectedLine, analysis, chartGridContainer);
+        if (selectedLine) {
+            displaySelectedLine(selectedLine, analysis, chartGridContainer);
+        } else {
+            // Show combined visualization when no line is selected
+            chartGridContainer.innerHTML = '';
+            chartGridContainer.appendChild(createCombinedVisualization(analysis));
+        }
     });
 
     navigationContainer.appendChild(toggleButton);
     navigationContainer.appendChild(lineSelect);
     chartToggleContainer.appendChild(navigationContainer);
 
-    // Initially display first line
-    const firstLine = Object.keys(analysis)[0];
-    displaySelectedLine(firstLine, analysis, chartGridContainer);
+    // Initially show combined visualization
+    chartGridContainer.appendChild(createCombinedVisualization(analysis));
 }
 
 // Add new function to display selected line
@@ -613,6 +656,7 @@ async function createFileList(files) {
     table.className = 'excel-table';
     table.innerHTML = `
         <tr>
+            <th>Serial No.</th>
             <th>File Name</th>
             <th>Upload Date</th>
             <th>Type</th>
@@ -620,16 +664,20 @@ async function createFileList(files) {
         </tr>
     `;
 
-    // Filter files based on date range if set
+    // Filter files based on upload type and date range
     const filteredFiles = files.filter(file => {
+        const matchesUploadType = file.originalname.toLowerCase().includes(
+            uploadType === 'Control deduction' ? 'control' : 'sensor'
+        );
+
         if (currentStartDate && currentEndDate) {
             const fileDate = new Date(file.createdAt);
             const startDate = new Date(currentStartDate);
             const endDate = new Date(currentEndDate);
             endDate.setHours(23, 59, 59, 999);
-            return fileDate >= startDate && fileDate <= endDate;
+            return matchesUploadType && fileDate >= startDate && fileDate <= endDate;
         }
-        return true;
+        return matchesUploadType;
     });
 
     if (!filteredFiles.length) {
@@ -640,6 +688,7 @@ async function createFileList(files) {
     filteredFiles.forEach(file => {
         const row = document.createElement('tr');
         row.innerHTML = `
+            <td>${file.serialNumber}</td>
             <td>${file.originalname}</td>
             <td>${new Date(file.createdAt).toLocaleString()}</td>
             <td>${uploadType}</td>
@@ -1022,17 +1071,37 @@ function filterDataByDateRange(data) {
 }
 
 // Update the upload type change handler
-document.getElementById('uploadType').addEventListener('change', () => {
+document.getElementById('uploadType').addEventListener('change', async (event) => {
+    const uploadType = event.target.value;
+    localStorage.setItem(STORAGE_KEYS.UPLOAD_TYPE, uploadType);
     document.getElementById('fileInput').value = '';
     updateHeader();
+    updateColorScheme(uploadType);
     
-    // Update both visualizations and dashboard when upload type changes
-    if (currentView === 'visualization') {
-        updateDataAndCharts();
-    } else if (currentView === 'dashboard') {
-        updateDashboardMetrics();
-    } else {
-        updateDisplay();
+    // Add visual feedback animation
+    const mainContent = document.getElementById('mainContent');
+    mainContent.style.opacity = '0.5';
+    
+    try {
+        // Fetch new files for the selected upload type
+        const filesResponse = await fetchWithAuth(`/files?uploadType=${uploadType}`);
+        if (filesResponse.ok) {
+            const files = await filesResponse.json();
+            await createFileList(files);
+        }
+
+        // Update other views based on current view
+        if (currentView === 'visualization') {
+            await updateDataAndCharts();
+        } else if (currentView === 'dashboard') {
+            await updateDashboardMetrics();
+        } else {
+            await updateDisplay();
+        }
+    } catch (error) {
+        console.error('Error updating data:', error);
+    } finally {
+        mainContent.style.opacity = '1';
     }
 });
 
@@ -1176,6 +1245,14 @@ async function updateDashboardMetrics() {
         document.querySelector('#minutesOfControlDeductionsByLine').previousElementSibling.textContent = 
             `Minutes of ${uploadType}s by Line`;
 
+        // Update weekly metrics
+        const weekStart = new Date(data.weekRange.start).toLocaleDateString();
+        const weekEnd = new Date(data.weekRange.end).toLocaleDateString();
+        document.getElementById('currentWeekRange').textContent = 
+            `${weekStart} - ${weekEnd}`;
+        document.getElementById('weeklyDeductions').textContent = 
+            data.weeklyDeductions;
+
         // Update line-based metrics tables
         const deductionsTable = createMetricTable(data.deductionsByLine, 'Line', `${uploadType}s`);
         const minutesTable = createMetricTable(data.minutesByLine, 'Line', 'Minutes');
@@ -1199,17 +1276,7 @@ async function updateDashboardMetrics() {
             'Minutes'
         );
 
-        // Update summary metrics with appropriate labels
-        document.querySelector('label[for="averageDeductionsToday"]').textContent = 
-            `Average ${uploadType}s:`;
-        document.querySelector('label[for="medianDeductions"]').textContent = 
-            `Median ${uploadType}s:`;
-        document.querySelector('label[for="deductionsGreaterThanOne"]').textContent = 
-            `${uploadType}s > 1:`;
-        document.querySelector('label[for="cumulativeValueOfDeductions"]').textContent = 
-            `Total Cumulative Value of ${uploadType}s:`;
-
-        // Update the values
+        // Update summary metrics
         document.getElementById('averageDeductionsToday').textContent = data.averageDeductionsToday;
         document.getElementById('medianDeductions').textContent = data.medianDeductions;
         document.getElementById('deductionsGreaterThanOne').textContent = data.deductionsGreaterThanOne;
@@ -1420,3 +1487,302 @@ const additionalStyles = `
 const styleElement = document.createElement('style');
 styleElement.textContent = additionalStyles;
 document.head.appendChild(styleElement);
+
+// Add after createCharts function
+function createCombinedVisualization(analysis) {
+    const container = document.createElement('div');
+    container.className = 'combined-visualization';
+    container.innerHTML = `
+        <h2>Combined Metrics Across All Lines</h2>
+        <div class="combined-charts">
+            <div class="chart-wrapper">
+                <h3>Combined Operation Counts</h3>
+                <canvas id="combinedOperationsChart"></canvas>
+            </div>
+            <div class="chart-wrapper">
+                <h3>Combined Time Gap Sums</h3>
+                <canvas id="combinedTimeGapChart"></canvas>
+            </div>
+        </div>
+    `;
+
+    // Aggregate data across all lines
+    const combinedOperations = {};
+    const combinedTimeGaps = {};
+
+    Object.values(analysis).forEach(lineData => {
+        Object.entries(lineData).forEach(([month, data]) => {
+            // Aggregate operations
+            Object.entries(data.operationCounts).forEach(([op, count]) => {
+                combinedOperations[op] = (combinedOperations[op] || 0) + count;
+            });
+
+            // Aggregate time gaps
+            Object.entries(data.timeGapSums).forEach(([op, sum]) => {
+                combinedTimeGaps[op] = (combinedTimeGaps[op] || 0) + sum;
+            });
+        });
+    });
+
+    // Create combined operations chart
+    new Chart(container.querySelector('#combinedOperationsChart'), {
+        type: currentChartType,
+        data: {
+            labels: Object.keys(combinedOperations),
+            datasets: [{
+                label: 'Total Operations',
+                data: Object.values(combinedOperations),
+                backgroundColor: generateColors(Object.keys(combinedOperations).length)
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Combined Operation Counts Across All Lines'
+                }
+            }
+        }
+    });
+
+    // Create combined time gap chart
+    new Chart(container.querySelector('#combinedTimeGapChart'), {
+        type: currentChartType,
+        data: {
+            labels: Object.keys(combinedTimeGaps),
+            datasets: [{
+                label: 'Total Time Gaps (minutes)',
+                data: Object.values(combinedTimeGaps).map(val => val.toFixed(2)),
+                backgroundColor: generateColors(Object.keys(combinedTimeGaps).length)
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Combined Time Gap Sums Across All Lines'
+                }
+            }
+        }
+    });
+
+    return container;
+}
+
+// Add these functions to handle the plant metrics
+async function submitPlantMetrics(event) {
+    event.preventDefault();
+    
+    const chartLoader = document.getElementById('chartLoader');
+    chartLoader.style.display = 'flex';  // Show loader
+    
+    const formData = {
+        date: document.getElementById('metricsDate').value,
+        time: document.getElementById('metricsTime').value,
+        plantRanking: parseInt(document.getElementById('plantRanking').value),
+        sensorCalibration: parseFloat(document.getElementById('sensorCalibration').value),
+        controlCalibration: parseFloat(document.getElementById('controlCalibration').value),
+        controlPercentage: parseFloat(document.getElementById('controlPercentage').value),
+        sensorPercentage: parseFloat(document.getElementById('sensorPercentage').value),
+        operationHours: parseFloat(document.getElementById('operationHours').value),
+        controlHours: parseFloat(document.getElementById('controlHours').value),
+        days: parseInt(document.getElementById('days').value),
+        linesNR: document.getElementById('linesNR').value
+    };
+
+    try {
+        const response = await fetchWithAuth('/plant-metrics', {
+            method: 'POST',
+            body: JSON.stringify(formData)
+        });
+
+        if (response.ok) {
+            alert('Metrics submitted successfully');
+            document.getElementById('plantMetricsForm').reset();
+            await updatePlantMetrics();
+            await loadMetricsHistory();
+        } else {
+            throw new Error('Failed to submit metrics');
+        }
+    } catch (error) {
+        console.error('Error submitting metrics:', error);
+        alert('Error submitting metrics');
+    } finally {
+        chartLoader.style.display = 'none';  // Hide loader
+    }
+}
+
+async function updatePlantMetrics() {
+    try {
+        const response = await fetchWithAuth('/plant-metrics');
+        const data = await response.json();
+
+        if (data.mostRecent) {
+            // Update current ranking
+            document.getElementById('currentRanking').textContent = data.mostRecent.plantRanking;
+
+            // Update YTD average
+            document.getElementById('ytdRanking').textContent = data.ytdAverage;
+
+            // Update calibration indicators and values
+            const controlCalibration = parseFloat(data.mostRecent.controlCalibration);
+            const sensorCalibration = parseFloat(data.mostRecent.sensorCalibration);
+
+            // Update control calibration
+            const controlIndicator = document.getElementById('controlIndicator');
+            controlIndicator.className = 'status-circle';
+            if (controlCalibration >= 99.69) {
+                controlIndicator.classList.add('status-green');
+            } else {
+                controlIndicator.classList.add('status-yellow');
+            }
+            document.getElementById('controlCalibrationValue').textContent = 
+                controlCalibration.toFixed(4) + '%';
+
+            // Update sensor calibration
+            const sensorIndicator = document.getElementById('sensorIndicator');
+            sensorIndicator.className = 'status-circle';
+            if (sensorCalibration >= 99.0) {
+                sensorIndicator.classList.add('status-green');
+            } else {
+                sensorIndicator.classList.add('status-yellow');
+            }
+            document.getElementById('sensorCalibrationValue').textContent = 
+                sensorCalibration.toFixed(4) + '%';
+
+            // Update latest metrics
+            document.getElementById('currentLinesNR').textContent = data.mostRecent.linesNR;
+            document.getElementById('currentDays').textContent = data.mostRecent.days;
+            document.getElementById('currentControlHours').textContent = 
+                parseFloat(data.mostRecent.controlHours).toFixed(2);
+            document.getElementById('currentOperationHours').textContent = 
+                parseFloat(data.mostRecent.operationHours).toFixed(2);
+        } else {
+            // Clear all values if no data is available
+            document.getElementById('currentRanking').textContent = '-';
+            document.getElementById('ytdRanking').textContent = '-';
+            document.getElementById('controlCalibrationValue').textContent = '-';
+            document.getElementById('sensorCalibrationValue').textContent = '-';
+            document.getElementById('currentLinesNR').textContent = '-';
+            document.getElementById('currentDays').textContent = '-';
+            document.getElementById('currentControlHours').textContent = '-';
+            document.getElementById('currentOperationHours').textContent = '-';
+            
+            // Reset indicators
+            document.getElementById('controlIndicator').className = 'status-circle';
+            document.getElementById('sensorIndicator').className = 'status-circle';
+        }
+    } catch (error) {
+        console.error('Error updating plant metrics:', error);
+    }
+}
+
+// Add event listener for the form
+document.getElementById('plantMetricsForm').addEventListener('submit', submitPlantMetrics);
+
+// Update metrics when dashboard is shown
+document.getElementById('viewDashboard').addEventListener('click', () => {
+    updatePlantMetrics();
+});
+
+// Add these functions to handle metrics history
+function toggleMetricsHistory() {
+    const content = document.getElementById('metricsHistoryContainer');
+    const icon = document.querySelector('.metrics-history .toggle-icon');
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.add('open');
+        loadMetricsHistory();
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('open');
+    }
+}
+
+async function loadMetricsHistory() {
+    const chartLoader = document.getElementById('chartLoader');
+    chartLoader.style.display = 'flex';  // Show loader
+    
+    try {
+        const response = await fetchWithAuth('/plant-metrics/history');
+        const metrics = await response.json();
+        
+        const tbody = document.getElementById('metricsHistoryBody');
+        tbody.innerHTML = '';
+        
+        if (metrics.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="7">No metrics history available</td>';
+            tbody.appendChild(row);
+        } else {
+            metrics.forEach(metric => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${new Date(metric.date).toLocaleDateString()}</td>
+                    <td>${metric.time}</td>
+                    <td>${metric.plantRanking}</td>
+                    <td>${parseFloat(metric.controlCalibration).toFixed(4)}%</td>
+                    <td>${parseFloat(metric.sensorCalibration).toFixed(4)}%</td>
+                    <td>${metric.linesNR}</td>
+                    <td>
+                        <button onclick="deleteMetric(${metric.id})" class="delete-btn">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading metrics history:', error);
+        const tbody = document.getElementById('metricsHistoryBody');
+        tbody.innerHTML = '<tr><td colspan="7">Error loading metrics history</td></tr>';
+    } finally {
+        chartLoader.style.display = 'none';  // Hide loader
+    }
+}
+
+async function deleteMetric(id) {
+    if (confirm('Are you sure you want to delete this metric?')) {
+        try {
+            const response = await fetchWithAuth(`/plant-metrics/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadMetricsHistory();
+                updatePlantMetrics();
+            } else {
+                throw new Error('Failed to delete metric');
+            }
+        } catch (error) {
+            console.error('Error deleting metric:', error);
+            alert('Error deleting metric');
+        }
+    }
+}
+
+// Add event listener for delete all metrics button
+document.getElementById('deleteAllMetrics').addEventListener('click', async () => {
+    if (confirm('Are you sure you want to delete all metrics? This action cannot be undone.')) {
+        try {
+            const response = await fetchWithAuth('/plant-metrics', {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadMetricsHistory();
+                updatePlantMetrics();
+                alert('All metrics deleted successfully');
+            } else {
+                throw new Error('Failed to delete metrics');
+            }
+        } catch (error) {
+            console.error('Error deleting all metrics:', error);
+            alert('Error deleting metrics');
+        }
+    }
+});
