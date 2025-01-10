@@ -83,7 +83,7 @@ function createMonthlyCharts(month, data) {
     
     createChart(`${month}-counts`, 'Operation Counts', operations, counts);
     createChart(`${month}-timegaps`, 'Time Gap Sums', operations, timeGaps);
-    createChart(`${month}-downtimes`, 'Downtime Sums', operations, downtimes);
+    // createChart(`${month}-downtimes`, 'Downtime Sums', operations, downtimes);
 }
 
 function createChart(id, title, labels, data) {
