@@ -15,7 +15,7 @@ const upload = multer({ dest: 'uploads/' });
 app.use(express.json());
 
 // PostgreSQL connection with Sequelize
-const sequelize = new Sequelize('postgresql://excelupload2_user:EW3XWWBq36RSzXnVcNpK0MhBBNzJBDjb@dpg-csvk9rlumphs7387c870-a.oregon-postgres.render.com/excelupload2', {
+const sequelize = new Sequelize('postgresql://excel_upload_8ei7_user:mCCqgx5oi1U6qrfziCvxSOxoz0o2BRcE@dpg-cu0jcs5svqrc73fj3ov0-a.oregon-postgres.render.com/excel_upload_8ei7', {
   dialect: 'postgres',
   dialectOptions: {
     ssl: {
