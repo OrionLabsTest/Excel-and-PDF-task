@@ -242,10 +242,10 @@ async function getNextSerialNumber(facility) {
     return maxSerial + 1;
 }
 
-// Modify the file upload endpoint
-app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).send('No file uploaded.');
+// Update the file upload endpoint to handle multiple files
+app.post('/upload/:uploadType', verifyToken, upload.array('excelFiles', 10), async (req, res) => {
+    if (!req.files || req.files.length === 0) {
+        return res.status(400).send('No files uploaded.');
     }
 
     try {
@@ -254,105 +254,132 @@ app.post('/upload/:uploadType', verifyToken, upload.single('excelFile'), async (
             return res.status(404).send('User not found.');
         }
 
-        // Check for existing file with same name
-        const existingFile = await UploadedFile.findOne({
-            where: {
-                originalname: req.file.originalname,
-                UserId: req.userId
-            }
-        });
-
-        if (existingFile) {
-            await fs.unlink(req.file.path);
-            return res.status(400).send('A file with this name has already been uploaded. Please rename the file before uploading.');
-        }
-
         const { uploadType } = req.params;
         
         // Validate upload type
         if (!['Control deduction', 'Sensor deduction'].includes(uploadType)) {
+            // Clean up uploaded files
+            await Promise.all(req.files.map(file => fs.unlink(file.path)));
             return res.status(400).send('Invalid upload type.');
         }
 
-        // Validate file name matches upload type
-        const fileName = req.file.originalname.toLowerCase();
-        const isControlFile = fileName.includes('control');
-        const isSensorFile = fileName.includes('sensor');
+        const results = [];
+        const errors = [];
 
-        if ((uploadType === 'Control deduction' && !isControlFile) || 
-            (uploadType === 'Sensor deduction' && !isSensorFile)) {
-            return res.status(400).send('File type does not match the upload type.');
-        }
+        // Process each file
+        for (const file of req.files) {
+            try {
+                // Check for existing file with same name
+                const existingFile = await UploadedFile.findOne({
+                    where: {
+                        originalname: file.originalname,
+                        UserId: req.userId
+                    }
+                });
 
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(req.file.path);
-        const worksheet = workbook.worksheets[0];
-
-        const operations = {};
-        let emptyRowCount = 0;
-        const MAX_EMPTY_ROWS = 5;
-
-        for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
-            const row = worksheet.getRow(rowNumber);
-            
-            if (row.values.filter(Boolean).length === 0) {
-                emptyRowCount++;
-                if (emptyRowCount >= MAX_EMPTY_ROWS) break;
-                continue;
-            }
-            
-            emptyRowCount = 0;
-
-            const line = row.getCell(1).value;
-            if (!line) continue;
-
-            const operation = {
-                line,
-                tdate: new Date(row.getCell(2).value),
-                DESCR: row.getCell(3).value,
-                tgap: row.getCell(6).value,
-                UserId: req.userId,
-                uploadType: uploadType
-            };
-
-            if (!operations[line]) operations[line] = [];
-            operations[line].push(operation);
-        }
-
-        try {
-            let uploadedFile;
-            let serialNumber;
-
-            await sequelize.transaction(async (t) => {
-                // Create operations
-                for (const lineOperations of Object.values(operations)) {
-                    await Operation.bulkCreate(lineOperations, { transaction: t });
+                if (existingFile) {
+                    await fs.unlink(file.path);
+                    errors.push(`File ${file.originalname} has already been uploaded. Please rename the file.`);
+                    continue;
                 }
 
-                // Create file record
-                uploadedFile = await UploadedFile.create({
-                    filename: req.file.filename,
-                    originalname: req.file.originalname,
-                    UserId: req.userId
-                }, { transaction: t });
+                // Validate file name matches upload type
+                const fileName = file.originalname.toLowerCase();
+                const isControlFile = fileName.includes('exceptions');
+                const isSensorFile = fileName.includes('sensor');
 
-                // Get next serial number and create serial number record
-                serialNumber = await getNextSerialNumber(user.facility);
-                await FileSerialNumber.create({
-                    serialNumber: serialNumber,
-                    facility: user.facility,
-                    UploadedFileId: uploadedFile.id
-                }, { transaction: t });
-            });
+                if ((uploadType === 'Control deduction' && !isControlFile) || 
+                    (uploadType === 'Sensor deduction' && !isSensorFile)) {
+                    await fs.unlink(file.path);
+                    errors.push(`File ${file.originalname} type does not match the upload type.`);
+                    continue;
+                }
 
-            res.send('File uploaded and processed successfully.');
-        } catch (error) {
-            console.error('Error processing file:', error);
-            res.status(500).send('Error processing file.');
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.readFile(file.path);
+                const worksheet = workbook.worksheets[0];
+
+                const operations = {};
+                let emptyRowCount = 0;
+                const MAX_EMPTY_ROWS = 5;
+
+                for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
+                    const row = worksheet.getRow(rowNumber);
+                    
+                    if (row.values.filter(Boolean).length === 0) {
+                        emptyRowCount++;
+                        if (emptyRowCount >= MAX_EMPTY_ROWS) break;
+                        continue;
+                    }
+                    
+                    emptyRowCount = 0;
+
+                    const line = row.getCell(1).value;
+                    if (!line) continue;
+
+                    const operation = {
+                        line,
+                        tdate: new Date(row.getCell(2).value),
+                        DESCR: row.getCell(3).value,
+                        tgap: row.getCell(6).value,
+                        UserId: req.userId,
+                        uploadType: uploadType
+                    };
+
+                    if (!operations[line]) operations[line] = [];
+                    operations[line].push(operation);
+                }
+
+                let uploadedFile;
+                let serialNumber;
+
+                await sequelize.transaction(async (t) => {
+                    // Create operations
+                    for (const lineOperations of Object.values(operations)) {
+                        await Operation.bulkCreate(lineOperations, { transaction: t });
+                    }
+
+                    // Create file record
+                    uploadedFile = await UploadedFile.create({
+                        filename: file.filename,
+                        originalname: file.originalname,
+                        UserId: req.userId
+                    }, { transaction: t });
+
+                    // Get next serial number and create serial number record
+                    serialNumber = await getNextSerialNumber(user.facility);
+                    await FileSerialNumber.create({
+                        serialNumber: serialNumber,
+                        facility: user.facility,
+                        UploadedFileId: uploadedFile.id
+                    }, { transaction: t });
+                });
+
+                results.push(`File ${file.originalname} uploaded and processed successfully.`);
+            } catch (error) {
+                console.error(`Error processing file ${file.originalname}:`, error);
+                errors.push(`Error processing file ${file.originalname}: ${error.message}`);
+                // Clean up the failed file
+                await fs.unlink(file.path);
+            }
         }
+
+        // Send response with results and any errors
+        res.json({
+            success: results.length > 0,
+            results,
+            errors: errors.length > 0 ? errors : undefined
+        });
+
     } catch (error) {
-        console.error('Error processing file:', error);
-        res.status(500).send('Error processing file.');
+        console.error('Error processing files:', error);
+        // Clean up all files in case of error
+        await Promise.all(req.files.map(file => fs.unlink(file.path)));
+        res.status(500).json({
+            success: false,
+            error: 'Error processing files.',
+            details: error.message
+        });
     }
 });
 
